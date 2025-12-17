@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oman Courts Dashboard</title>
+  <script src="https://api.tomtom.com/maps-sdk-for-web/cdn/6.x/6.16.0/maps/maps-web.min.js"></script>
+  <link rel="stylesheet" href="https://api.tomtom.com/maps-sdk-for-web/cdn/6.x/6.16.0/maps/maps.css">
+  <style>
+    body, html { margin: 0; padding: 0; height: 100%; width: 100%; background-color: transparent; overflow: hidden; }
+    #map { width: 100%; height: 100%; border-radius: 32px; overflow: hidden; }
+    
+    .vignette-mask {
+        --mask-h: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%);
+        --mask-v: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+        -webkit-mask-image: var(--mask-h), var(--mask-v);
+        mask-image: var(--mask-h), var(--mask-v);
+        -webkit-mask-composite: source-in;
+        mask-composite: intersect;
+    }
+
+    .action-button {
+        position: absolute; top: 10px; z-index: 999; background: #1F2937; border: 1px solid #374151;
+        border-radius: 4px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5); padding: 4px 8px;
+        font-family: -apple-system, sans-serif; font-size: 11px; color: #E5E7EB; cursor: pointer;
+    }
+    #homeBtn { right: 10px; }
+    #mapToggleBtn { left: 10px; }
+
+    /* CARD STYLING */
+    .mapboxgl-popup-content {
+        background: #2D3748 !important;
+        border: 1px solid #4A5568 !important;
+        border-radius: 12px !important;
+        padding: 12px !important;
+        font-size: 13px !important;
+        color: #E2E8F0 !important;
+        min-width: 240px !important;
+    }
+
+    .center-info-popup .center-name {
+        font-weight: 700; font-size: 14px; margin-bottom: 8px;
+        direction: rtl; text-align: right; border-bottom: 1px solid #4A5568; padding-bottom: 6px;
+    }
+
+    .center-info-popup .info-row { margin-bottom: 3px; display: flex; justify-content: space-between; }
+    .center-info-popup .info-label { color: #A0AEC0; }
+    
+    /* SOFT COLORS FOR CARD */
+    .wt-green { color: #9AE6B4 !important; } /* Soft Mint */
+    .wt-yellow { color: #FAF089 !important; } /* Soft Lemon */
+    .wt-red { color: #FEB2B2 !important; } /* Soft Coral/Pink */
+
+    /* SATURATED MARKERS */
+    .custom-marker {
+        width: 32px; height: 32px;
+        background-image: url('marker-icon.png');
+        background-size: 60%;
+        background-repeat: no-repeat;
+        background-position: center;
+        cursor: pointer;
+        border-radius: 50%;
+        box-sizing: border-box;
+    }
+
+    .ring-green { border: 3px solid #00FF66; background-color: rgba(0, 0, 0, 0.8); }
+    .ring-yellow { border: 3px solid #FFFF00; background-color: rgba(0, 0, 0, 0.8); }
+    .ring-red { 
+        border: 3px solid #FF5C5C; /* Softer Red */
+        background-color: rgba(0, 0, 0, 0.8);
+        animation: pulse-red-soft 1.5s infinite; 
+    }
+
+    @keyframes pulse-red-soft {
+        0% { box-shadow: 0 0 0 0 rgba(255, 92, 92, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(255, 92, 92, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 92, 92, 0); }
+    }
+
+    .map-hidden { display: none !important; }
+    .button-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <button id="mapToggleBtn" class="action-button">🌐 Map</button>
+  <button id="homeBtn" class="action-button">Re-center</button>
+
+  <script>
+    const ENABLE_TRANSPARENCY = true; 
+    const SatelliteStyle = 'https://api.tomtom.com/style/2/custom/style/dG9tdG9tQEBAb04zVERRS2ZwWDdhZ2xFSjtouu6VruNH9K396JnwpLxH.json?key=KEY';
+    
+    const defaultCenter = [57.5, 23.6];
+    const defaultZoom = 7.5;
+
+    const map = tt.map({
+        key: 'KEY',
+        container: 'map',
+        center: defaultCenter,
+        zoom: defaultZoom,
+        pitch: 45,
+        style: SatelliteStyle
+    });
+
+    const mapElement = document.getElementById('map');
+    if (ENABLE_TRANSPARENCY) mapElement.classList.add('vignette-mask');
+
+    let popup = null;
+    let markers = [];
+    let popupTimeout = null;
+    let isMouseOverPopup = false;
+    let centersGeoJSON;
+
+    const getCaseStatus = (val) => {
+        const n = parseFloat(val);
+        if (n > 500) return { class: 'wt-red', ring: 'ring-red' };
+        if (n >= 300) return { class: 'wt-yellow', ring: 'ring-yellow' };
+        return { class: 'wt-green', ring: 'ring-green' };
+    };
+
+    function clearMarkers() {
+        markers.forEach(m => m.remove());
+        markers = [];
+    }
+
+    function addCenterMarkers(geoJSON) {
+        clearMarkers();
+        geoJSON.features.forEach(feature => {
+            const props = feature.properties;
+            const status = getCaseStatus(props['Active Cases']);
+            
+            const markerElement = document.createElement('div');
+            markerElement.className = `custom-marker ${status.ring}`;
+            
+            const marker = new tt.Marker({ element: markerElement })
+                .setLngLat(feature.geometry.coordinates)
+                .addTo(map);
+
+            markerElement.addEventListener('mouseenter', () => {
+                if (isMouseOverPopup) return;
+                if (popupTimeout) { clearTimeout(popupTimeout); popupTimeout = null; }
+                if (popup) popup.remove();
+
+                popup = new tt.Popup({ offset: [0, -20], closeButton: false })
+                    .setLngLat(feature.geometry.coordinates)
+                    .setHTML(`
+                        <div class="center-info-popup">
+                            <div class="center-name">${props['Court Name']}</div>
+                            <div class="info-row">
+                                <span class="info-label">Active Cases:</span>
+                                <span class="info-value ${status.class}">${props['Active Cases']}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Closed Cases:</span>
+                                <span class="info-value">${props['Closed Cases']}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Daily Visitors:</span>
+                                <span class="info-value">${props['Daily Visitors']}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Avg Case Duration:</span>
+                                <span class="info-value">${props['Average Case Duration']}</span>
+                            </div>
+                        </div>
+                    `)
+                    .addTo(map);
+
+                const el = popup.getElement();
+                if (el) {
+                    el.addEventListener('mouseenter', () => { isMouseOverPopup = true; });
+                    el.addEventListener('mouseleave', () => { 
+                        isMouseOverPopup = false; 
+                        popupTimeout = setTimeout(() => { if(popup){popup.remove(); popup=null;} }, 300); 
+                    });
+                }
+            });
+
+            markerElement.addEventListener('mouseleave', () => {
+                popupTimeout = setTimeout(() => {
+                    if (popup && !isMouseOverPopup) { popup.remove(); popup = null; }
+                }, 500);
+            });
+
+            markers.push(marker);
+        });
+    }
+
+    map.on('load', () => {
+        fetch('centers.geojson')
+            .then(r => r.json())
+            .then(data => {
+                centersGeoJSON = data;
+                addCenterMarkers(data);
+            });
+    });
+
+    document.getElementById('mapToggleBtn').addEventListener('click', function() {
+        mapElement.classList.toggle('map-hidden');
+        document.getElementById('homeBtn').classList.toggle('button-hidden');
+        this.textContent = mapElement.classList.contains('map-hidden') ? '☐ Map' : '🌐 Map';
+        if (!mapElement.classList.contains('map-hidden')) map.resize();
+    });
+
+    document.getElementById('homeBtn').addEventListener('click', () => {
+        map.flyTo({ center: defaultCenter, zoom: defaultZoom, pitch: 45, duration: 2000 });
+    });
+
+    window.addEventListener("message", (evt) => {
+        let msg = evt.data;
+        if (msg?.data?.data) msg = msg.data;
+        if (msg?.data) {
+            // Re-use logic for filtering from previous code if data is available
+            const cols = (msg.columns || []).map(c => (c.label || c.name || "").toLowerCase());
+            const cIdx = cols.indexOf('court name');
+            if (cIdx >= 0 && centersGeoJSON) {
+                const lookup = {};
+                msg.data.forEach(r => { lookup[r[cIdx].trim().toLowerCase()] = true; });
+                const filtered = centersGeoJSON.features.filter(f => 
+                    f.properties['Court Name'].trim().toLowerCase() in lookup
+                );
+                addCenterMarkers({ type: 'FeatureCollection', features: filtered });
+            }
+        }
+    }, false);
+  </script>
+</body>
+</html>
