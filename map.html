@@ -34,7 +34,7 @@
         padding: 12px !important;
         font-size: 13px !important;
         color: #E2E8F0 !important;
-        min-width: 240px !important;
+        min-width: 250px !important;
     }
 
     .center-info-popup .center-name {
@@ -42,13 +42,21 @@
         direction: rtl; text-align: right; border-bottom: 1px solid #4A5568; padding-bottom: 6px;
     }
 
-    .center-info-popup .info-row { margin-bottom: 3px; display: flex; justify-content: space-between; }
+    .center-info-popup .info-row { margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
     .center-info-popup .info-label { color: #A0AEC0; }
     
+    /* Live Counter Styling */
+    .live-counter-val {
+        font-family: 'Courier New', monospace;
+        font-weight: bold;
+        transition: color 0.3s ease;
+    }
+
     /* SOFT COLORS FOR CARD */
-    .wt-green { color: #9AE6B4 !important; } /* Soft Mint */
-    .wt-yellow { color: #FAF089 !important; } /* Soft Lemon */
-    .wt-red { color: #FEB2B2 !important; } /* Soft Coral/Pink */
+    .wt-green { color: #9AE6B4 !important; } 
+    .wt-yellow { color: #FAF089 !important; } 
+    .wt-red { color: #FEB2B2 !important; } 
+    .wt-blue { color: #63B3ED !important; } 
 
     /* SATURATED MARKERS */
     .custom-marker {
@@ -65,7 +73,7 @@
     .ring-green { border: 3px solid #00FF66; background-color: rgba(0, 0, 0, 0.8); }
     .ring-yellow { border: 3px solid #FFFF00; background-color: rgba(0, 0, 0, 0.8); }
     .ring-red { 
-        border: 3px solid #FF5C5C; /* Softer Red */
+        border: 3px solid #FF5C5C; 
         background-color: rgba(0, 0, 0, 0.8);
         animation: pulse-red-soft 1.5s infinite; 
     }
@@ -91,6 +99,50 @@
     
     const defaultCenter = [57.5, 23.6];
     const defaultZoom = 7.5;
+
+    // --- LIVE COUNTER STATE ---
+    const liveCounters = {};
+
+    function getLiveCount(courtName) {
+        if (!liveCounters[courtName]) {
+            // RANGE: 65 - 150
+            liveCounters[courtName] = Math.floor(Math.random() * (150 - 65 + 1)) + 65;
+        }
+        return liveCounters[courtName];
+    }
+
+    function safeId(str) {
+        return str.replace(/[^a-zA-Z0-9]/g, '_');
+    }
+
+    // --- SIMULATION LOOP ---
+    // Runs every 1 second (1000ms)
+    setInterval(() => {
+        const keys = Object.keys(liveCounters);
+        if (keys.length === 0) return;
+
+        keys.forEach(key => {
+            // LOGIC: 
+            // To get an update every ~8.5 seconds (avg of 7-10),
+            // the chance per 1-second tick is approx 12% (1/8.5).
+            if (Math.random() < 0.12) {
+                
+                // INCREMENT: 1 or 2
+                const increment = Math.floor(Math.random() * 2) + 1;
+                liveCounters[key] += increment;
+
+                // Update DOM if popup is open
+                const counterElement = document.getElementById(`count-${safeId(key)}`);
+                if (counterElement) {
+                    counterElement.innerText = liveCounters[key].toLocaleString();
+                    
+                    // Subtle flash effect on update
+                    counterElement.style.color = '#fff';
+                    setTimeout(() => { counterElement.style.color = '#63B3ED'; }, 300);
+                }
+            }
+        });
+    }, 1000);
 
     const map = tt.map({
         key: 'KEY',
@@ -126,7 +178,11 @@
         clearMarkers();
         geoJSON.features.forEach(feature => {
             const props = feature.properties;
+            const courtName = props['Court Name'];
             const status = getCaseStatus(props['Active Cases']);
+            
+            // Init counter
+            getLiveCount(courtName);
             
             const markerElement = document.createElement('div');
             markerElement.className = `custom-marker ${status.ring}`;
@@ -140,11 +196,19 @@
                 if (popupTimeout) { clearTimeout(popupTimeout); popupTimeout = null; }
                 if (popup) popup.remove();
 
+                const liveVal = getLiveCount(courtName);
+
                 popup = new tt.Popup({ offset: [0, -20], closeButton: false })
                     .setLngLat(feature.geometry.coordinates)
                     .setHTML(`
                         <div class="center-info-popup">
-                            <div class="center-name">${props['Court Name']}</div>
+                            <div class="center-name">${courtName}</div>
+                            
+                            <div class="info-row" style="border-bottom: 1px solid #4A5568; padding-bottom: 4px; margin-bottom: 6px;">
+                                <span class="info-label" style="color:#E2E8F0;">Requests Completed:</span>
+                                <span id="count-${safeId(courtName)}" class="info-value live-counter-val wt-blue">${liveVal.toLocaleString()}</span>
+                            </div>
+
                             <div class="info-row">
                                 <span class="info-label">Active Cases:</span>
                                 <span class="info-value ${status.class}">${props['Active Cases']}</span>
@@ -209,7 +273,6 @@
         let msg = evt.data;
         if (msg?.data?.data) msg = msg.data;
         if (msg?.data) {
-            // Re-use logic for filtering from previous code if data is available
             const cols = (msg.columns || []).map(c => (c.label || c.name || "").toLowerCase());
             const cIdx = cols.indexOf('court name');
             if (cIdx >= 0 && centersGeoJSON) {
@@ -224,5 +287,4 @@
     }, false);
   </script>
 </body>
-
 </html>
